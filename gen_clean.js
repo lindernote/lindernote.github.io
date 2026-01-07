@@ -193,7 +193,7 @@ body {
 .ded-section {
   position: absolute;
   top: 7.37in;
-  left: 3.83in;
+  left: 4.50in;
   font-size: 9pt;
   font-family: Helvetica, Arial, sans-serif;
 }
@@ -209,8 +209,7 @@ body {
 .summary-section {
   position: absolute;
   top: 9.35in;
-  left: 3.68in;
-  width: 4.34in;
+  left: 4.50in;
   font-size: 9pt;
   font-family: Helvetica, Arial, sans-serif;
 }
@@ -252,33 +251,33 @@ td.r { text-align: right; }
 /* Left side tables - PAY and TAXES aligned */
 .pay-section table,
 .tax-section table {
-  width: 2.87in;
+  width: 3.50in;
 }
-.pay-section .col-label { width: 1.27in; }
-.pay-section .col-hours { width: 0.51in; }
-.pay-section .col-rate { width: 0.16in; }
-.pay-section .col-current { width: 0.43in; }
-.pay-section .col-ytd { width: 0.50in; }
+.pay-section .col-label { width: 1.00in; }
+.pay-section .col-hours { width: 0.60in; }
+.pay-section .col-rate { width: 0.50in; }
+.pay-section .col-current { width: 0.65in; }
+.pay-section .col-ytd { width: 0.75in; }
 
-.tax-section .col-label { width: 1.94in; }
-.tax-section .col-current { width: 0.43in; }
-.tax-section .col-ytd { width: 0.50in; }
+.tax-section .col-label { width: 2.10in; }
+.tax-section .col-current { width: 0.65in; }
+.tax-section .col-ytd { width: 0.75in; }
 
 /* Right side tables - DEDUCTIONS and SUMMARY */
 .ded-section table {
-  width: 4.12in;
+  width: 3.20in;
 }
-.ded-section .col-label { width: 3.00in; }
-.ded-section .col-current { width: 0.55in; }
-.ded-section .col-ytd { width: 0.57in; }
+.ded-section .col-label { width: 1.80in; }
+.ded-section .col-current { width: 0.65in; }
+.ded-section .col-ytd { width: 0.75in; }
 
 .summary-section table {
   border: 1pt solid #000;
-  width: 4.35in;
+  width: 3.35in;
 }
-.summary-section .col-label { width: 1.45in; }
-.summary-section .col-current { width: 1.40in; }
-.summary-section .col-ytd { width: 1.50in; }
+.summary-section .col-label { width: 1.80in; }
+.summary-section .col-current { width: 0.65in; }
+.summary-section .col-ytd { width: 0.90in; }
 .summary-section th {
   border-bottom: 1pt solid #000;
   padding: 0.03in 0.1in;
