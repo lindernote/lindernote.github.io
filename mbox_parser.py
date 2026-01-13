@@ -3,6 +3,8 @@
 MBOX to JSON Parser for Litigation Support
 Extracts emails with full metadata, plain text bodies, and attachments.
 Optimized for AI assessment of content for timelines and actions.
+
+SRC Recruiting, LLC v. Cognitio Corp. - Counsel Brief Support
 """
 
 import mailbox
@@ -18,6 +20,33 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from email.utils import parseaddr, getaddresses
+
+
+# Attachment type classification patterns
+ATTACHMENT_TYPES = {
+    "w9": re.compile(r'w[\-_\s]?9', re.IGNORECASE),
+    "invoice": re.compile(r'invoice|inv[\-_]?\d|billing', re.IGNORECASE),
+    "resume": re.compile(r'resume|cv|curriculum', re.IGNORECASE),
+    "contract": re.compile(r'contract|agreement|msa|sow|nda', re.IGNORECASE),
+    "background_check": re.compile(r'background|screening|check|clearance', re.IGNORECASE),
+    "reference": re.compile(r'reference|referral', re.IGNORECASE),
+}
+
+# Entity patterns for signature block extraction
+ENTITY_PATTERNS = [
+    re.compile(r'Stanley\s+Reid\s+Consulting[,\s]*(Inc\.?|Incorporated)?', re.IGNORECASE),
+    re.compile(r'SRC\s+Recruiting[,\s]*(LLC)?', re.IGNORECASE),
+    re.compile(r'Cognitio\s+(Corp\.?|Corporation)?', re.IGNORECASE),
+]
+
+# Key persons for the litigation
+KEY_PERSONS = {
+    "mollie": re.compile(r'mollie|mclaughlin', re.IGNORECASE),
+    "michael_silver": re.compile(r'michael\s+silver|m\.\s*silver', re.IGNORECASE),
+    "david_highnote": re.compile(r'david\s+highnote|d\.\s*highnote', re.IGNORECASE),
+    "roger_hockenberry": re.compile(r'roger\s+hockenberry|r\.\s*hockenberry', re.IGNORECASE),
+    "jon_borg": re.compile(r'jon\s+borg|j\.\s*borg', re.IGNORECASE),
+}
 
 
 def decode_header_value(value: str) -> str:
@@ -223,13 +252,127 @@ def parse_references(msg: email.message.Message) -> list:
     return refs
 
 
-def parse_mbox_file(mbox_path: Path, output_dir: Path) -> dict:
+def classify_attachment(filename: str, content_type: str) -> list:
+    """Classify attachment by type for litigation relevance."""
+    classifications = []
+    text_to_check = filename.lower()
+
+    for doc_type, pattern in ATTACHMENT_TYPES.items():
+        if pattern.search(text_to_check):
+            classifications.append(doc_type)
+
+    # Also check by MIME type
+    if 'pdf' in content_type:
+        if not classifications:
+            classifications.append('document')
+    elif 'spreadsheet' in content_type or 'excel' in content_type:
+        classifications.append('spreadsheet')
+
+    return classifications if classifications else ['other']
+
+
+def extract_signature_entities(body: str) -> list:
+    """Extract entity names from email signature blocks."""
+    entities_found = []
+
+    # Look for signature block (typically after -- or multiple newlines at end)
+    sig_markers = ['--', '___', '---', 'Best regards', 'Regards', 'Thanks', 'Sincerely']
+    sig_start = len(body)
+
+    for marker in sig_markers:
+        pos = body.rfind(marker)
+        if pos != -1 and pos > len(body) * 0.5:  # Only in latter half
+            sig_start = min(sig_start, pos)
+
+    # Check the signature area (or full body if no clear signature)
+    search_area = body[sig_start:] if sig_start < len(body) else body[-1000:]
+
+    for pattern in ENTITY_PATTERNS:
+        matches = pattern.findall(search_area)
+        for match in matches:
+            if isinstance(match, tuple):
+                full_match = pattern.search(search_area)
+                if full_match:
+                    entities_found.append(full_match.group(0).strip())
+            else:
+                entities_found.append(match.strip())
+
+    # Also check full body for entity mentions
+    for pattern in ENTITY_PATTERNS:
+        for match in pattern.finditer(body):
+            entity = match.group(0).strip()
+            if entity and entity not in entities_found:
+                entities_found.append(entity)
+
+    return list(set(entities_found))
+
+
+def identify_key_persons(email_record: dict) -> list:
+    """Identify key persons mentioned in email."""
+    persons_found = []
+
+    # Check all text fields
+    text_to_search = []
+
+    if email_record.get('from'):
+        text_to_search.append(email_record['from'].get('name', ''))
+        text_to_search.append(email_record['from'].get('email', ''))
+
+    for field in ['to', 'cc', 'bcc']:
+        for addr in email_record.get(field, []):
+            text_to_search.append(addr.get('name', ''))
+            text_to_search.append(addr.get('email', ''))
+
+    text_to_search.append(email_record.get('subject', ''))
+    text_to_search.append(email_record.get('body_plain', ''))
+
+    combined_text = ' '.join(text_to_search)
+
+    for person_key, pattern in KEY_PERSONS.items():
+        if pattern.search(combined_text):
+            persons_found.append(person_key)
+
+    return persons_found
+
+
+def extract_custodian_from_path(mbox_path: Path) -> str:
+    """Extract custodian name from MBOX filename if present."""
+    # Common patterns: "John_Doe.mbox", "john.doe@company.com.mbox", "JohnDoe-inbox.mbox"
+    name = mbox_path.stem
+
+    # Clean up common suffixes
+    for suffix in ['-inbox', '-sent', '-all', '_inbox', '_sent', '_all', '-mail', '_mail']:
+        if name.lower().endswith(suffix):
+            name = name[:-len(suffix)]
+
+    # Convert underscores/dots to spaces for readability
+    name = name.replace('_', ' ').replace('.', ' ')
+
+    return name.strip()
+
+
+def compute_thread_id(msg_id: str, in_reply_to: str, references: list) -> str:
+    """Compute a thread ID from message references."""
+    # Thread ID is the earliest message in the reference chain
+    if references:
+        return references[0]
+    elif in_reply_to:
+        return in_reply_to
+    else:
+        return msg_id  # This message starts its own thread
+
+
+def parse_mbox_file(mbox_path: Path, output_dir: Path, custodian: str = None) -> dict:
     """Parse a single MBOX file and return structured data."""
 
     print(f"Parsing: {mbox_path}")
 
     attachments_dir = output_dir / "attachments"
     attachments_dir.mkdir(parents=True, exist_ok=True)
+
+    # Extract custodian from path if not provided
+    if not custodian:
+        custodian = extract_custodian_from_path(mbox_path)
 
     emails = []
     earliest_date = None
@@ -268,10 +411,28 @@ def parse_mbox_file(mbox_path: Path, output_dir: Path) -> dict:
         attachments = extract_attachments(msg, attachments_dir, i)
         total_attachments += len(attachments)
 
+        # Classify attachments
+        for att in attachments:
+            att['doc_types'] = classify_attachment(
+                att.get('filename', ''),
+                att.get('content_type', '')
+            )
+
+        # Get body and extract entities
+        body_plain = get_plain_text_body(msg)
+        entities_mentioned = extract_signature_entities(body_plain)
+
+        # Parse threading fields
+        in_reply_to = msg.get("In-Reply-To", "").strip() if msg.get("In-Reply-To") else None
+        references = parse_references(msg)
+        thread_id = compute_thread_id(message_id, in_reply_to, references)
+
         # Build email record
         email_record = {
             "index": i,
             "message_id": message_id,
+            "thread_id": thread_id,
+            "custodian": custodian,
             "date": iso_date,
             "date_original": original_date,
             "from": parse_email_address(msg.get("From", "")),
@@ -279,11 +440,19 @@ def parse_mbox_file(mbox_path: Path, output_dir: Path) -> dict:
             "cc": parse_email_addresses(msg.get("Cc", "")),
             "bcc": parse_email_addresses(msg.get("Bcc", "")),
             "subject": decode_header_value(msg.get("Subject", "")),
-            "body_plain": get_plain_text_body(msg),
+            "body_plain": body_plain,
             "attachments": attachments,
-            "in_reply_to": msg.get("In-Reply-To", "").strip() if msg.get("In-Reply-To") else None,
-            "references": parse_references(msg),
+            "in_reply_to": in_reply_to,
+            "references": references,
+            "entities_mentioned": entities_mentioned,
+            # Placeholder for analysis tags (populated by search_emails.py)
+            "tags": [],
+            "exhibit_id": None,
+            "relevance_note": None,
         }
+
+        # Identify key persons
+        email_record['key_persons'] = identify_key_persons(email_record)
 
         emails.append(email_record)
 
@@ -358,7 +527,7 @@ def parse_multiple_mbox_files(mbox_paths: list[Path], output_dir: Path) -> dict:
 
     return {
         "metadata": {
-            "parser_version": "1.0.0",
+            "parser_version": "2.0.0",
             "parsed_at": datetime.now(timezone.utc).isoformat(),
             "total_emails": len(all_emails),
             "total_attachments": total_attachments,
@@ -443,7 +612,7 @@ Output Structure:
         result = parse_mbox_file(args.mbox_files[0], args.output_dir)
         result = {
             "metadata": {
-                "parser_version": "1.0.0",
+                "parser_version": "2.0.0",
                 "parsed_at": result.get("parsed_at", datetime.now(timezone.utc).isoformat()),
                 "total_emails": result.get("total_emails", 0),
                 "total_attachments": result.get("total_attachments", 0),
