@@ -475,9 +475,9 @@ def parse_mbox_file(mbox_path: Path, output_dir: Path, custodian: str = None) ->
 
 
 def parse_multiple_mbox_files(mbox_paths: list[Path], output_dir: Path) -> dict:
-    """Parse multiple MBOX files into a single master JSON."""
+    """Parse multiple MBOX files into a single master JSON with deduplication."""
 
-    all_emails = []
+    all_emails_raw = []
     file_summaries = []
     total_attachments = 0
     earliest_date = None
@@ -497,7 +497,7 @@ def parse_multiple_mbox_files(mbox_paths: list[Path], output_dir: Path) -> dict:
         for email_rec in result["emails"]:
             email_rec["source_file"] = mbox_path.name
 
-        all_emails.extend(result["emails"])
+        all_emails_raw.extend(result["emails"])
         total_attachments += result["total_attachments"]
 
         # Track overall date range
@@ -518,17 +518,67 @@ def parse_multiple_mbox_files(mbox_paths: list[Path], output_dir: Path) -> dict:
             "date_range": result["date_range"]
         })
 
-    # Sort all emails by date for timeline analysis
+    # =================================================================
+    # DEDUPLICATION (Section C2 of spec)
+    # - Key by Message-ID
+    # - Prefer earliest email in thread
+    # - Track all custodians who had a copy
+    # =================================================================
+    print(f"\nDeduplicating {len(all_emails_raw)} emails...")
+
+    # Sort by date first so we keep earliest
+    all_emails_raw.sort(key=lambda x: x["date"] or "9999")
+
+    seen_message_ids = {}  # message_id -> index in deduped list
+    all_emails = []
+    duplicates_removed = 0
+
+    for email_rec in all_emails_raw:
+        msg_id = email_rec.get("message_id", "")
+
+        if msg_id in seen_message_ids:
+            # Duplicate found - add this custodian to the existing record
+            existing_idx = seen_message_ids[msg_id]
+            existing = all_emails[existing_idx]
+
+            # Track all custodians/sources that had this email
+            if "all_custodians" not in existing:
+                existing["all_custodians"] = [existing.get("custodian", "")]
+                existing["all_source_files"] = [existing.get("source_file", "")]
+
+            new_custodian = email_rec.get("custodian", "")
+            new_source = email_rec.get("source_file", "")
+
+            if new_custodian and new_custodian not in existing["all_custodians"]:
+                existing["all_custodians"].append(new_custodian)
+            if new_source and new_source not in existing["all_source_files"]:
+                existing["all_source_files"].append(new_source)
+
+            duplicates_removed += 1
+        else:
+            # New unique email
+            seen_message_ids[msg_id] = len(all_emails)
+            # Initialize custodian tracking
+            email_rec["all_custodians"] = [email_rec.get("custodian", "")]
+            email_rec["all_source_files"] = [email_rec.get("source_file", "")]
+            all_emails.append(email_rec)
+
+    print(f"  Removed {duplicates_removed} duplicates")
+    print(f"  Unique emails: {len(all_emails)}")
+
+    # Re-sort by date (already sorted, but ensure consistency)
     all_emails.sort(key=lambda x: x["date"] or "")
 
-    # Re-index after sorting
+    # Re-index after deduplication
     for i, email_rec in enumerate(all_emails):
         email_rec["index"] = i
 
     return {
         "metadata": {
-            "parser_version": "2.0.0",
+            "parser_version": "2.1.0",
             "parsed_at": datetime.now(timezone.utc).isoformat(),
+            "total_emails_raw": len(all_emails_raw) + duplicates_removed,
+            "duplicates_removed": duplicates_removed,
             "total_emails": len(all_emails),
             "total_attachments": total_attachments,
             "date_range": {
